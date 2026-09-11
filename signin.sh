@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# signin.sh — TRAE 批量签到脚本，签到后通过 Bark 推送通知
+# signin.sh — TRAE 批量签到脚本，签到后通过 ntfy 推送通知
 set -e
 cd "$(dirname "$0")"
 
-# Bark 推送地址：运行前请自行 export BARK_URL='https://api.day.app/你的Key'
-# 注意：不要将真实 Bark key 硬编码进仓库。GitHub Actions 通过 secrets.BARK_URL 注入。
-BARK_URL="${BARK_URL:-}"
-if [ -z "$BARK_URL" ]; then
-  echo "⚠️ 未设置 BARK_URL，跳过 Bark 推送。本地运行可先: export BARK_URL='https://api.day.app/你的Key'"
+# ntfy 推送地址：运行前请自行 export NTFY_URL='https://ntfy.sh/你的主题'
+# 注意：不要将真实 ntfy 主题硬编码进仓库。GitHub Actions 通过 secrets.NTFY_URL 注入。
+NTFY_URL="${NTFY_URL:-}"
+if [ -z "$NTFY_URL" ]; then
+  echo "⚠️ 未设置 NTFY_URL，跳过 ntfy 推送。本地运行可先: export NTFY_URL='https://ntfy.sh/你的主题'"
 fi
 
 go build -o signin_bin ./cmd/signin
@@ -36,26 +36,32 @@ while IFS= read -r line; do
     fi
 done <<< "$SIGNIN_OUTPUT"
 
-# 构建 Bark 推送内容
+# 构建 ntfy 推送内容
 TITLE="TRAE 签到"
+TAG="information_source"
 if [ "$SIGNIN_EXIT" -eq 0 ]; then
     if [ "$OK" -gt 0 ] 2>/dev/null; then
         TITLE="✅ TRAE 签到成功"
+        TAG="white_check_mark"
     elif [ "$FAIL" -gt 0 ] 2>/dev/null; then
         TITLE="⚠️ TRAE 签到异常"
+        TAG="warning"
     else
         TITLE="📌 TRAE 已签到"
+        TAG="pushpin"
     fi
 else
     TITLE="❌ TRAE 签到失败"
+    TAG="x"
 fi
 
 BODY="总计${TOTAL} | 成功${OK} | 已签${ALREADY} | 失败${FAIL}\n${ACCOUNTS}"
 
-# 发送 Bark 通知
-if [ -n "$BARK_URL" ]; then
-  curl -s -X POST "$BARK_URL/$(python3 -c "import urllib.parse; print(urllib.parse.quote('$TITLE'))")/$(python3 -c "import urllib.parse; print(urllib.parse.quote('$BODY'))")" > /dev/null 2>&1 || true
-  echo "📲 Bark 通知已发送"
+# 发送 ntfy 通知（标题走 Header，正文用 %b 把 \n 还原成真实换行）
+if [ -n "$NTFY_URL" ]; then
+  curl -s -H "Title: $TITLE" -H "Tags: $TAG" \
+       -d "$(printf '%b' "$BODY")" "$NTFY_URL" > /dev/null 2>&1 || true
+  echo "📲 ntfy 通知已发送"
 else
-  echo "📲 未配置 BARK_URL，跳过 Bark 推送"
+  echo "📲 未配置 NTFY_URL，跳过 ntfy 推送"
 fi
