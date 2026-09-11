@@ -21,11 +21,19 @@ jobs:
       - name: 编译签到工具
         run: go build -o signin_bin ./cmd/signin
 
+      - name: 生成凭证文件
+        run: |
+          mkdir -p auths
+          # 账号1
+          echo '${{ secrets.TRAE_AUTH_1 }}' > auths/trae-1.json
+          # 账号2
+          echo '${{ secrets.TRAE_AUTH_2 }}' > auths/trae-2.json
+          # 如需更多账号，继续添加
+
       - name: 执行签到
         run: |
           mkdir -p /tmp/signin
           ./signin_bin auths 2>&1 | tee /tmp/signin/output.txt
-          # 调试：确认原始输出，排查完后可删
           cat /tmp/signin/output.txt
 
       - name: 提取结果
@@ -36,12 +44,13 @@ jobs:
           ok=$(echo "$OUT" | grep -oP '签到成功=\K\d+' | head -1 || echo "0")
           already=$(echo "$OUT" | grep -oP '已签=\K\d+' | head -1 || echo "0")
           fail=$(echo "$OUT" | grep -oP '失败=\K\d+' | head -1 || echo "0")
-          # 全部用单行写 GITHUB_OUTPUT
+          
           echo "total=$total"     >> "$GITHUB_OUTPUT"
           echo "ok=$ok"           >> "$GITHUB_OUTPUT"
           echo "already=$already" >> "$GITHUB_OUTPUT"
           echo "fail=$fail"       >> "$GITHUB_OUTPUT"
-          echo "raw=$OUT"         >> "$GITHUB_OUTPUT"   # 兜底，供通知用
+          # 使用 Base64 编码防特殊字符报错
+          echo "raw=$(echo "$OUT" | base64 -w 0)" >> "$GITHUB_OUTPUT"
 
       - name: Bark 通知
         if: always()
@@ -52,13 +61,17 @@ jobs:
           else
             TITLE="✅ TRAE签到完成"
           fi
-          # 优先用结构化字段，全部为空时退回原始输出
+          
+          # 解码 Base64 原始输出
+          RAW_BODY=$(echo "${{ steps.result.outputs.raw }}" | base64 -d)
+          
           BODY="总计${{ steps.result.outputs.total }} 成功${{ steps.result.outputs.ok }} 已签${{ steps.result.outputs.already }} 失败${{ steps.result.outputs.fail }}"
           if [ -z "$BODY" ] || [ "$BODY" = "总计 成功 已签 失败" ]; then
-            BODY="${{ steps.result.outputs.raw }}"
+            BODY="$RAW_BODY"
           fi
+          
           TITLE_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$TITLE")
-          BODY_ENC=$(python3  -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
+          BODY_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
           echo "最终推送: $TITLE | $BODY"
           curl -s -X POST "${{ secrets.BARK_URL }}/${TITLE_ENC}/${BODY_ENC}" || true
 
