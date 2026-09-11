@@ -1,7 +1,6 @@
 // signin — TRAE 纯签到工具：遍历 auths/trae-*.json 全部账号，
 // 自动刷新过期 token，逐个签到并查询积分。
 package main
-
 import (
 	"fmt"
 	"os"
@@ -9,21 +8,18 @@ import (
 	"sort"
 	"strings"
 	"time"
-
 	"trae-signin/internal/auth"
 	"trae-signin/internal/upstream"
 )
-
 type row struct {
 	file   string
 	uid    string
 	nick   string
 	status string
 	detail string
-	remain int64
+	remain float64
 	hasRem bool
 }
-
 func main() {
 	dir := "auths"
 	if len(os.Args) > 1 {
@@ -37,10 +33,8 @@ func main() {
 	}
 	sort.Strings(files)
 	up := upstream.New()
-
 	var rows []row
 	okN, alreadyN, failN, disabledN := 0, 0, 0, 0
-
 	for _, f := range files {
 		r := row{file: filepath.Base(f)}
 		raw, err := os.ReadFile(f)
@@ -59,7 +53,6 @@ func main() {
 		}
 		a.FilePath = f
 		r.uid, r.nick = a.UID, a.Nickname
-
 		// 刷新过期 token（2h 缓冲）
 		if a.NeedsRefresh(2 * time.Hour) {
 			fmt.Printf("🔄 %s token 即将过期，正在刷新...\n", r.uid)
@@ -73,7 +66,6 @@ func main() {
 			_ = a.SaveAtomic()
 			fmt.Printf("   ✅ token 刷新成功\n")
 		}
-
 		// 签到
 		checkedIn, _, enable, serr := up.CheckinStatus(a)
 		switch {
@@ -105,23 +97,21 @@ func main() {
 				okN++
 			}
 		}
-
-		// 查积分
+		// 查剩余积分
 		if remain, qerr := up.UserEntUsage(a); qerr == nil {
 			r.remain, r.hasRem = remain, true
 		}
 		rows = append(rows, r)
 	}
-
 	// 报告
 	fmt.Println()
 	fmt.Println("┌──────────────────────────────────────┬───────────────┬──────────────┬──────────┬──────────────────────────────────────┐")
-	fmt.Println("│ UID                                  │ 昵称          │ 状态         │ 积分     │ 详情                                 │")
+	fmt.Println("│ UID                                  │ 昵称          │ 状态         │ 剩余积分 │ 详情                                 │")
 	fmt.Println("├──────────────────────────────────────┼───────────────┼──────────────┼──────────┼──────────────────────────────────────┤")
 	for _, r := range rows {
 		remain := "-"
 		if r.hasRem {
-			remain = fmt.Sprintf("%d", r.remain)
+			remain = fmt.Sprintf("%.2f", r.remain)
 		}
 		fmt.Printf("│ %-36s │ %-13s │ %-12s │ %-8s │ %-36s │\n",
 			trunc(r.uid, 36), trunc(r.nick, 13), r.status, remain, trunc(r.detail, 36))
@@ -130,21 +120,18 @@ func main() {
 	fmt.Println()
 	fmt.Printf("📊 总计=%d  签到成功=%d  已签=%d  禁用=%d  失败=%d\n", len(rows), okN, alreadyN, disabledN, failN)
 }
-
 func isAlready(msg string) bool {
 	s := strings.ToLower(msg)
 	return strings.Contains(s, "已签到") ||
 		strings.Contains(s, "already check") ||
 		strings.Contains(s, "already checked")
 }
-
 func trunc(s string, n int) string {
 	if len(s) > n {
 		return s[:n]
 	}
 	return s
 }
-
 func short(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) > 60 {
