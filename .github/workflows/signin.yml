@@ -1,4 +1,27 @@
-- name: 执行签到
+name: TRAE 每日签到
+
+on:
+  schedule:
+    # 每天 00:00 UTC = 08:00 北京时间
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  signin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: 编译签到工具
+        run: go build -o signin_bin ./cmd/signin
+
+      - name: 执行签到
         run: |
           mkdir -p /tmp/signin
           ./signin_bin auths 2>&1 | tee /tmp/signin/output.txt
@@ -13,7 +36,7 @@
           ok=$(echo "$OUT" | grep -oP '签到成功=\K\d+' | head -1 || echo "0")
           already=$(echo "$OUT" | grep -oP '已签=\K\d+' | head -1 || echo "0")
           fail=$(echo "$OUT" | grep -oP '失败=\K\d+' | head -1 || echo "0")
-          # 全部用单行写 GITHUB_OUTPUT，绝不出错
+          # 全部用单行写 GITHUB_OUTPUT
           echo "total=$total"     >> "$GITHUB_OUTPUT"
           echo "ok=$ok"           >> "$GITHUB_OUTPUT"
           echo "already=$already" >> "$GITHUB_OUTPUT"
@@ -38,3 +61,7 @@
           BODY_ENC=$(python3  -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$BODY")
           echo "最终推送: $TITLE | $BODY"
           curl -s -X POST "${{ secrets.BARK_URL }}/${TITLE_ENC}/${BODY_ENC}" || true
+
+      - name: 清理凭证
+        if: always()
+        run: rm -rf auths
