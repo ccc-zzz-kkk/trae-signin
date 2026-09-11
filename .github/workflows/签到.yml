@@ -1,0 +1,16 @@
+- name: ntfy 通知
+        if: always()
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+        run: |
+          STATUS="${{ job.status }}"
+          if [ "$STATUS" = "success" ]; then
+            PRIO="default"; TAGS="white_check_mark"; TITLE="TRAE签到成功"
+          else
+            PRIO="high"; TAGS="x"; TITLE="TRAE签到失败"
+          fi
+          curl -s -X POST "$NTFY_URL" \
+            -H "Title: $TITLE" \
+            -H "Priority: $PRIO" \
+            -H "Tags: $TAGS" \
+            -d "job=$STATUS 仓库=${{ github.repository }} 见Actions日志"
