@@ -39,7 +39,6 @@ jobs:
         run: |
           mkdir -p /tmp/signin
           ./signin_bin auths 2>&1 | tee /tmp/signin/output.txt
-          cat /tmp/signin/output.txt
       - name: 提取结果
         id: result
         run: |
@@ -70,11 +69,27 @@ jobs:
             TITLE="✅ TRAE签到完成"
             TAG="white_check_mark"
           fi
+          # 从签到输出表格提取每个账号：昵称 状态 剩余积分
+          ACCOUNTS=""
+          if [ -f /tmp/signin/output.txt ]; then
+            while IFS= read -r line; do
+              if echo "$line" | grep -qP '│\s+\d+'; then
+                nick=$(echo "$line" | sed 's/│/\n/g' | sed -n '3p' | xargs)
+                status=$(echo "$line" | sed 's/│/\n/g' | sed -n '4p' | xargs)
+                credits=$(echo "$line" | sed 's/│/\n/g' | sed -n '5p' | xargs)
+                ACCOUNTS="${ACCOUNTS}${nick} ${status} 剩余${credits}\n"
+              fi
+            done < /tmp/signin/output.txt
+          fi
           BODY="总计${{ steps.result.outputs.total }} 成功${{ steps.result.outputs.ok }} 已签${{ steps.result.outputs.already }} 失败${{ steps.result.outputs.fail }}"
+          if [ -n "$ACCOUNTS" ]; then
+            BODY="${BODY}
+${ACCOUNTS}"
+          fi
           echo "最终推送: $TITLE | $BODY"
-          # ntfy：标题走 Title header，正文走 body
+          # ntfy：标题走 Title header，正文用 %b 把 \n 还原成真实换行
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Title: $TITLE" -H "Tags: $TAG" -d "$BODY" "$NTFY_URL") || true
+            -H "Title: $TITLE" -H "Tags: $TAG" -d "$(printf '%b' "$BODY")" "$NTFY_URL") || true
           echo "ntfy HTTP 状态: $HTTP_CODE（200 即成功）"
       - name: 清理凭证
         if: always()
