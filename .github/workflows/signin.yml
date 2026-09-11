@@ -83,8 +83,7 @@ jobs:
           fi
           BODY="总计${{ steps.result.outputs.total }} 成功${{ steps.result.outputs.ok }} 已签${{ steps.result.outputs.already }} 失败${{ steps.result.outputs.fail }}"
           if [ -n "$ACCOUNTS" ]; then
-            BODY="${BODY}
-${ACCOUNTS}"
+            BODY="${BODY}\n${ACCOUNTS}"
           fi
           echo "最终推送: $TITLE | $BODY"
           # ntfy：标题走 Title header，正文用 %b 把 \n 还原成真实换行
