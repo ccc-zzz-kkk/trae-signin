@@ -18,7 +18,7 @@ SIGNIN_EXIT=$?
 
 echo "$SIGNIN_OUTPUT"
 
-# 提取关键信息用于 Bark 推送
+# 提取关键信息用于 ntfy 推送
 TOTAL=$(echo "$SIGNIN_OUTPUT" | grep -oP '总计=\K\d+' || echo "?")
 OK=$(echo "$SIGNIN_OUTPUT" | grep -oP '签到成功=\K\d+' || echo "?")
 ALREADY=$(echo "$SIGNIN_OUTPUT" | grep -oP '已签=\K\d+' || echo "?")
@@ -32,7 +32,7 @@ while IFS= read -r line; do
         nick=$(echo "$line" | sed 's/│/\n/g' | sed -n '3p' | xargs)
         status=$(echo "$line" | sed 's/│/\n/g' | sed -n '4p' | xargs)
         credits=$(echo "$line" | sed 's/│/\n/g' | sed -n '5p' | xargs)
-        ACCOUNTS="${ACCOUNTS}${nick} ${status} 积分${credits}\n"
+        ACCOUNTS="${ACCOUNTS}${nick} ${status} 剩余${credits}\n"
     fi
 done <<< "$SIGNIN_OUTPUT"
 
