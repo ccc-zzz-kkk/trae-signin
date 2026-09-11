@@ -1,6 +1,5 @@
 // Package upstream 封装 TRAE SOLO 签到、积分查询、Token 刷新等上游 API。
 package upstream
-
 import (
 	"bytes"
 	"encoding/json"
@@ -9,29 +8,23 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
 	"trae-signin/internal/auth"
 )
-
 const (
 	UgHost         = "https://api.trae.cn"
 	OAuthHost      = "https://api.trae.com.cn"
 	ClientID       = "en1oxy7wnw8j9n"
 	IdeVersion     = "0.1.43"
 	IdeVersionCode = "20260716"
-
 	EpExchange      = "/cloudide/api/v3/trae/oauth/ExchangeToken"
 	EpCheckinStatus = "/trae/api/v2/ug/checkin_credits/status"
 	EpCheckinClaim  = "/trae/api/v2/ug/checkin_credits/claim"
 	EpEntUsage      = "/trae/api/v2/pay/ide_user_ent_usage"
 )
-
 var clientUA = "Trae/" + IdeVersion
-
 type Client struct {
 	HTTP *http.Client
 }
-
 func New() *Client {
 	tr := &http.Transport{
 		MaxIdleConns:        100,
@@ -42,7 +35,6 @@ func New() *Client {
 		HTTP: &http.Client{Timeout: 60 * time.Second, Transport: tr},
 	}
 }
-
 func (c *Client) doJSON(req *http.Request) (json.RawMessage, error) {
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -55,12 +47,10 @@ func (c *Client) doJSON(req *http.Request) (json.RawMessage, error) {
 	}
 	return raw, nil
 }
-
 // RefreshToken 通过 ExchangeToken 强制刷新 access token。
 func (c *Client) RefreshToken(a *auth.Auth) error {
 	a.Lock()
 	defer a.Unlock()
-
 	if strings.TrimSpace(a.RefreshToken) == "" {
 		return fmt.Errorf("no refreshToken")
 	}
@@ -81,7 +71,6 @@ func (c *Client) RefreshToken(a *auth.Auth) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", clientUA)
-
 	data, err := c.doJSON(req)
 	if err != nil {
 		return err
@@ -115,7 +104,6 @@ func (c *Client) RefreshToken(a *auth.Auth) error {
 	}
 	return nil
 }
-
 // CheckinStatus 查询签到状态。
 func (c *Client) CheckinStatus(a *auth.Auth) (checkedIn bool, credits int64, enable bool, err error) {
 	req, err := http.NewRequest(http.MethodPost, UgHost+EpCheckinStatus, bytes.NewReader([]byte("{}")))
@@ -137,7 +125,6 @@ func (c *Client) CheckinStatus(a *auth.Auth) (checkedIn bool, credits int64, ena
 	}
 	return resp.CheckedIn, resp.Credits, resp.Enable, nil
 }
-
 // CheckinClaim 执行签到。
 func (c *Client) CheckinClaim(a *auth.Auth) error {
 	req, err := http.NewRequest(http.MethodPost, UgHost+EpCheckinClaim, bytes.NewReader([]byte("{}")))
@@ -148,9 +135,9 @@ func (c *Client) CheckinClaim(a *auth.Auth) error {
 	_, err = c.doJSON(req)
 	return err
 }
-
-// UserEntUsage 查询积分余额。
-func (c *Client) UserEntUsage(a *auth.Auth) (remain int64, err error) {
+// UserEntUsage 查询剩余积分：优先使用 usage_summary（剩余 = 总额 - 已消耗），
+// 与 Trae App 显示口径一致；无汇总数据时回退为各权益包 credits_limit 之和。
+func (c *Client) UserEntUsage(a *auth.Auth) (remain float64, err error) {
 	req, err := http.NewRequest(http.MethodPost, UgHost+EpEntUsage, bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return 0, err
@@ -161,6 +148,10 @@ func (c *Client) UserEntUsage(a *auth.Auth) (remain int64, err error) {
 		return 0, err
 	}
 	var resp struct {
+		UsageSummary struct {
+			ConsumedAmount float64 `json:"consumed_amount"`
+			TotalAmount    float64 `json:"total_amount"`
+		} `json:"usage_summary"`
 		UserEntitlementPackList []struct {
 			EntitlementBaseInfo struct {
 				Quota struct {
@@ -172,12 +163,15 @@ func (c *Client) UserEntUsage(a *auth.Auth) (remain int64, err error) {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return 0, fmt.Errorf("ent usage parse: %w", err)
 	}
-	for _, p := range resp.UserEntitlementPackList {
-		remain += p.EntitlementBaseInfo.Quota.CreditsLimit
+	if resp.UsageSummary.TotalAmount > 0 {
+		return resp.UsageSummary.TotalAmount - resp.UsageSummary.ConsumedAmount, nil
 	}
-	return remain, nil
+	var limit int64
+	for _, p := range resp.UserEntitlementPackList {
+		limit += p.EntitlementBaseInfo.Quota.CreditsLimit
+	}
+	return float64(limit), nil
 }
-
 func ugHeaders(req *http.Request, a *auth.Auth) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -188,7 +182,6 @@ func ugHeaders(req *http.Request, a *auth.Auth) {
 		req.Header.Set("X-Device-Id", a.DeviceID)
 	}
 }
-
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if len(s) > n {
