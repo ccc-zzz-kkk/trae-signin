@@ -1,5 +1,6 @@
 // Package upstream 封装 TRAE SOLO 签到、积分查询、Token 刷新等上游 API。
 package upstream
+
 import (
 	"bytes"
 	"encoding/json"
@@ -10,21 +11,27 @@ import (
 	"time"
 	"trae-signin/internal/auth"
 )
+
 const (
-	UgHost         = "https://api.trae.cn"
-	OAuthHost      = "https://api.trae.com.cn"
-	ClientID       = "en1oxy7wnw8j9n"
-	IdeVersion     = "0.1.43"
-	IdeVersionCode = "20260716"
+	UgHost          = "https://api.trae.cn"
+	OAuthHost       = "https://api.trae.com.cn"
+	ClientID        = "en1oxy7wnw8j9n"
+	IdeVersion      = "0.1.52"
+	IdeVersionCode  = "20260811"
+	DeviceBrand     = "20Y5A002XX"
+	OSVersion       = "Windows 10 Pro"
 	EpExchange      = "/cloudide/api/v3/trae/oauth/ExchangeToken"
 	EpCheckinStatus = "/trae/api/v2/ug/checkin_credits/status"
 	EpCheckinClaim  = "/trae/api/v2/ug/checkin_credits/claim"
 	EpEntUsage      = "/trae/api/v2/pay/ide_user_ent_usage"
 )
+
 var clientUA = "Trae/" + IdeVersion
+
 type Client struct {
 	HTTP *http.Client
 }
+
 func New() *Client {
 	tr := &http.Transport{
 		MaxIdleConns:        100,
@@ -47,6 +54,7 @@ func (c *Client) doJSON(req *http.Request) (json.RawMessage, error) {
 	}
 	return raw, nil
 }
+
 // RefreshToken 通过 ExchangeToken 强制刷新 access token。
 func (c *Client) RefreshToken(a *auth.Auth) error {
 	a.Lock()
@@ -104,6 +112,7 @@ func (c *Client) RefreshToken(a *auth.Auth) error {
 	}
 	return nil
 }
+
 // CheckinStatus 查询签到状态。
 func (c *Client) CheckinStatus(a *auth.Auth) (checkedIn bool, credits int64, enable bool, err error) {
 	req, err := http.NewRequest(http.MethodPost, UgHost+EpCheckinStatus, bytes.NewReader([]byte("{}")))
@@ -128,6 +137,7 @@ func (c *Client) CheckinStatus(a *auth.Auth) (checkedIn bool, credits int64, ena
 	}
 	return resp.CheckedIn, resp.Credits, resp.Enable, nil
 }
+
 // CheckinClaim 执行签到。
 // 注意：claim 接口在限流等场景仍返回 HTTP 200，需解析响应体中的业务码，
 // 避免「日志显示成功、实际未签到」。
@@ -146,6 +156,7 @@ func (c *Client) CheckinClaim(a *auth.Auth) error {
 	}
 	return nil
 }
+
 // UserEntUsage 查询剩余积分：优先使用 usage_summary（剩余 = 总额 - 已消耗），
 // 与 Trae App 显示口径一致；无汇总数据时回退为各权益包 credits_limit 之和。
 func (c *Client) UserEntUsage(a *auth.Auth) (remain float64, err error) {
@@ -186,14 +197,22 @@ func (c *Client) UserEntUsage(a *auth.Auth) (remain float64, err error) {
 	}
 	return float64(limit), nil
 }
+
+// ugHeaders 设置 UG（签到/积分）接口请求头。
+// 注意：官方客户端会注入设备指纹头，服务端校验这些头，
+// 缺任一项会以业务码 9074（"当前参与用户太多"）拒绝，与真实限流无关。
 func ugHeaders(req *http.Request, a *auth.Auth) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", clientUA)
 	req.Header.Set("Authorization", "Cloud-IDE-JWT "+a.JWT())
 	req.Header.Set("X-User-Region", "CN")
+	req.Header.Set("x-device-brand", DeviceBrand)
+	req.Header.Set("x-device-type", "windows")
+	req.Header.Set("x-os-version", OSVersion)
+	req.Header.Set("x-app-version", IdeVersion)
 	if a.DeviceID != "" {
-		req.Header.Set("X-Device-Id", a.DeviceID)
+		req.Header.Set("x-device-id", a.DeviceID) // 值须为账号真实注册的设备 ID
 	}
 }
 
