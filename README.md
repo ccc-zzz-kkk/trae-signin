@@ -70,7 +70,7 @@ export BARK_URL="https://api.day.app/你的Key"
    | `TRAE_AUTH_2` | 账号2 的完整凭证 JSON | 同上，多个账号依次添加 |
    | `BARK_URL` | `https://api.day.app/你的Key` | Bark 推送地址 |
 
-3. 每天北京时间 08:00 自动执行，也可在 Actions 页面手动触发
+3. 每天北京时间 02:37 自动执行（错峰避开限流高峰），也可在 Actions 页面手动触发
 
 > 凭证 JSON 格式（登录后从 `auths/trae-*.json` 复制）：
 > ```json
@@ -80,10 +80,10 @@ export BARK_URL="https://api.day.app/你的Key"
 ### 方式二：Crontab
 
 ```bash
-# 每天 08:00 签到
+# 每天凌晨 2:37 签到（错峰避开限流高峰）
 crontab -e
 # 添加：
-0 8 * * * cd /path/to/trae-signin && bash signin.sh >> signin.log 2>&1
+37 2 * * * cd /path/to/trae-signin && bash signin.sh >> signin.log 2>&1
 ```
 
 ### 方式三：内置调度器

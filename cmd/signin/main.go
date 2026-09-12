@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -130,15 +131,21 @@ func main() {
 	fmt.Printf("📊 总计=%d  签到成功=%d  已签=%d  禁用=%d  失败=%d\n", len(rows), okN, alreadyN, disabledN, failN)
 }
 
-const claimMaxRetries = 3
+const claimMaxRetries = 5
 
-// claimWithRetry 执行签到；失败时（如限流等瞬时错误）按递增间隔自动重试。
+// claimWithRetry 执行签到；失败时（如限流等瞬时错误）按指数退避 + 随机抖动自动重试，
+// 避免固定间隔的重试仍落在同一个限流窗口内。
 // 返回 nil 表示签到成功；返回「已签到」类错误表示今日已签；其余为最终失败。
 func claimWithRetry(up *upstream.Client, a *auth.Auth, uid string) error {
+	baseDelays := []time.Duration{
+		10 * time.Second, 30 * time.Second, 60 * time.Second, 2 * time.Minute, 4 * time.Minute,
+	}
 	var lastErr error
 	for i := 0; i <= claimMaxRetries; i++ {
 		if i > 0 {
-			delay := time.Duration(5*i) * time.Second
+			base := baseDelays[i-1]
+			jitter := time.Duration(rand.Int63n(int64(base)/2)) - base/4 // ±25% 抖动
+			delay := base + jitter
 			fmt.Printf("   ⏳ %s 签到未成功（%s），%d 秒后重试 %d/%d...\n",
 				uid, short(lastErr.Error()), int(delay.Seconds()), i, claimMaxRetries)
 			time.Sleep(delay)
