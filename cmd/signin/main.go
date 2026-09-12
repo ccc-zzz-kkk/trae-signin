@@ -131,7 +131,8 @@ func main() {
 	fmt.Printf("📊 总计=%d  签到成功=%d  已签=%d  禁用=%d  失败=%d\n", len(rows), okN, alreadyN, disabledN, failN)
 }
 
-const claimMaxRetries = 5
+// 测试期间暂不重试（0 = 只尝试一次），恢复时改回 5。
+const claimMaxRetries = 0
 
 // claimWithRetry 执行签到；失败时（如限流等瞬时错误）按指数退避 + 随机抖动自动重试，
 // 避免固定间隔的重试仍落在同一个限流窗口内。
