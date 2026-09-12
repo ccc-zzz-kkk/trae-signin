@@ -1,6 +1,7 @@
 // signin — TRAE 纯签到工具：遍历 auths/trae-*.json 全部账号，
 // 自动刷新过期 token，逐个签到并查询积分。
 package main
+
 import (
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"trae-signin/internal/auth"
 	"trae-signin/internal/upstream"
 )
+
 type row struct {
 	file   string
 	uid    string
@@ -20,6 +22,7 @@ type row struct {
 	remain float64
 	hasRem bool
 }
+
 func main() {
 	dir := "auths"
 	if len(os.Args) > 1 {
@@ -88,13 +91,19 @@ func main() {
 			r.detail = "签到已禁用"
 			disabledN++
 		default:
-			if err := up.CheckinClaim(a); err != nil {
-				r.status = "FAIL"
-				r.detail = short(err.Error())
-				failN++
-			} else {
+			claimErr := claimWithRetry(up, a, r.uid)
+			switch {
+			case claimErr == nil:
 				r.status = "✅ OK"
 				okN++
+			case isAlready(claimErr.Error()):
+				r.status = "ALREADY"
+				r.detail = "今日已签到"
+				alreadyN++
+			default:
+				r.status = "FAIL"
+				r.detail = short(claimErr.Error())
+				failN++
 			}
 		}
 		// 查剩余积分
@@ -120,6 +129,32 @@ func main() {
 	fmt.Println()
 	fmt.Printf("📊 总计=%d  签到成功=%d  已签=%d  禁用=%d  失败=%d\n", len(rows), okN, alreadyN, disabledN, failN)
 }
+
+const claimMaxRetries = 3
+
+// claimWithRetry 执行签到；失败时（如限流等瞬时错误）按递增间隔自动重试。
+// 返回 nil 表示签到成功；返回「已签到」类错误表示今日已签；其余为最终失败。
+func claimWithRetry(up *upstream.Client, a *auth.Auth, uid string) error {
+	var lastErr error
+	for i := 0; i <= claimMaxRetries; i++ {
+		if i > 0 {
+			delay := time.Duration(5*i) * time.Second
+			fmt.Printf("   ⏳ %s 签到未成功（%s），%d 秒后重试 %d/%d...\n",
+				uid, short(lastErr.Error()), int(delay.Seconds()), i, claimMaxRetries)
+			time.Sleep(delay)
+		}
+		err := up.CheckinClaim(a)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if isAlready(err.Error()) {
+			return err
+		}
+	}
+	return fmt.Errorf("重试 %d 次仍失败: %s", claimMaxRetries, short(lastErr.Error()))
+}
+
 func isAlready(msg string) bool {
 	s := strings.ToLower(msg)
 	return strings.Contains(s, "已签到") ||

@@ -115,6 +115,9 @@ func (c *Client) CheckinStatus(a *auth.Auth) (checkedIn bool, credits int64, ena
 	if err != nil {
 		return false, 0, false, err
 	}
+	if err := checkBizCode(data); err != nil {
+		return false, 0, false, err
+	}
 	var resp struct {
 		CheckedIn bool  `json:"checked_in"`
 		Credits   int64 `json:"credits"`
@@ -126,14 +129,22 @@ func (c *Client) CheckinStatus(a *auth.Auth) (checkedIn bool, credits int64, ena
 	return resp.CheckedIn, resp.Credits, resp.Enable, nil
 }
 // CheckinClaim 执行签到。
+// 注意：claim 接口在限流等场景仍返回 HTTP 200，需解析响应体中的业务码，
+// 避免「日志显示成功、实际未签到」。
 func (c *Client) CheckinClaim(a *auth.Auth) error {
 	req, err := http.NewRequest(http.MethodPost, UgHost+EpCheckinClaim, bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return err
 	}
 	ugHeaders(req, a)
-	_, err = c.doJSON(req)
-	return err
+	data, err := c.doJSON(req)
+	if err != nil {
+		return err
+	}
+	if err := checkBizCode(data); err != nil {
+		return fmt.Errorf("claim failed: %w", err)
+	}
+	return nil
 }
 // UserEntUsage 查询剩余积分：优先使用 usage_summary（剩余 = 总额 - 已消耗），
 // 与 Trae App 显示口径一致；无汇总数据时回退为各权益包 credits_limit 之和。
@@ -145,6 +156,9 @@ func (c *Client) UserEntUsage(a *auth.Auth) (remain float64, err error) {
 	ugHeaders(req, a)
 	data, err := c.doJSON(req)
 	if err != nil {
+		return 0, err
+	}
+	if err := checkBizCode(data); err != nil {
 		return 0, err
 	}
 	var resp struct {
@@ -182,6 +196,36 @@ func ugHeaders(req *http.Request, a *auth.Auth) {
 		req.Header.Set("X-Device-Id", a.DeviceID)
 	}
 }
+
+// checkBizCode 校验上游 UG 接口的统一业务码。
+// 这些接口即使业务失败也常返回 HTTP 200，仅靠状态码判断会误报成功；
+// 若响应体是 {code, message} 结构且 code != 0，则返回错误，由调用方决定如何归类。
+func checkBizCode(data []byte) error {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	var b struct {
+		Code    int64  `json:"code"`
+		Message string `json:"message"`
+		Msg     string `json:"msg"`
+	}
+	if err := json.Unmarshal(data, &b); err != nil {
+		// 响应体不是统一业务码结构，交给调用方自行按字段解析。
+		return nil
+	}
+	if b.Code == 0 {
+		return nil
+	}
+	msg := b.Message
+	if msg == "" {
+		msg = b.Msg
+	}
+	if msg == "" {
+		return fmt.Errorf("code=%d", b.Code)
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if len(s) > n {
