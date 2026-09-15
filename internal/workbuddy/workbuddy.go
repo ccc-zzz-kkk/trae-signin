@@ -254,19 +254,27 @@ func (c *Client) DailyCheckin(a *auth.Auth) (credit int64, streak int64, already
 		return 0, 0, false, err
 	}
 	text := strings.TrimSpace(string(raw))
-	if status >= 300 {
-		return 0, 0, false, fmt.Errorf("checkin http %d: %s", status, truncate(text, 200))
-	}
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
+		if status >= 300 {
+			return 0, 0, false, fmt.Errorf("checkin http %d: %s", status, truncate(text, 200))
+		}
 		return 0, 0, false, fmt.Errorf("checkin parse: %w", err)
 	}
 	msg := strings.TrimSpace(env.Msg)
 	lower := strings.ToLower(msg)
-	if env.Code != 0 {
-		if strings.Contains(msg, "已签到") || (strings.Contains(lower, "already") && strings.Contains(lower, "check")) {
-			return 0, 0, true, nil
+	// 已签到：接口会返回 HTTP 400 + code 10001（"今天已签到，请明天再来"），
+	// 属幂等成功，需在状态码判断之前识别，避免误报失败。
+	if env.Code == 10001 || strings.Contains(msg, "已签到") || (strings.Contains(lower, "already") && strings.Contains(lower, "check")) {
+		return 0, 0, true, nil
+	}
+	if status >= 300 {
+		if msg == "" {
+			msg = fmt.Sprintf("code=%d", env.Code)
 		}
+		return 0, 0, false, fmt.Errorf("checkin http %d: %s", status, truncate(msg, 120))
+	}
+	if env.Code != 0 {
 		if msg == "" {
 			msg = fmt.Sprintf("code=%d", env.Code)
 		}
