@@ -1,3 +1,7 @@
 # TRAE 签到定时任务
 # 每天凌晨 2:37 执行签到（错峰避开 8 点整的限流高峰），结果追加到 signin.log
 37 2 * * * cd /workspace/trae-signin && bash signin.sh >> signin.log 2>&1
+
+# WorkBuddy/CodeBuddy 签到定时任务
+# 每天凌晨 2:40 执行（跟在 TRAE 之后错峰），结果追加到 signin-workbuddy.log
+40 2 * * * cd /workspace/trae-signin && bash signin-workbuddy.sh >> signin-workbuddy.log 2>&1

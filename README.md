@@ -94,6 +94,29 @@ go build -o scheduler ./cmd/scheduler
 # → 每天 08:00 自动签到
 ```
 
+## WorkBuddy / CodeBuddy 签到
+
+本仓库同样支持 WorkBuddy（腾讯 CodeBuddy）的每日签到，与 TRAE 互不影响。
+
+| 功能 | 说明 |
+|------|------|
+| **登录** | `login-workbuddy.sh` OAuth 设备授权：拿 state → 浏览器腾讯 SSO 登录 → 自动轮询换 token |
+| **签到** | 批量遍历 `auths/workbuddy-*.json`，自动刷新 token，调用 `daily-checkin` 签到 |
+| **积分查询** | 查询 `get-user-resource` 的 `TotalDosage` 总积分 |
+| **ntfy 通知** | 签到后推送到 ntfy（`WORKBUDDY_NTFY_URL`） |
+
+```bash
+# 登录（生成 auths/workbuddy-<uid>.json）
+./login-workbuddy.sh
+
+# 签到
+./signin-workbuddy.sh
+```
+
+GitHub Actions 配置：在 Secrets 中添加 `WORKBUDDY_AUTH_1`（凭证 JSON，登录后从 `auths/workbuddy-*.json` 复制）和 `WORKBUDDY_NTFY_URL`（ntfy 完整地址，如 `https://ntfy.sh/你的主题`）。
+
+> 鉴权域为 `copilot.tencent.com`，签到/积分域为 `www.codebuddy.cn`。
+
 ## 目录结构
 
 ```
