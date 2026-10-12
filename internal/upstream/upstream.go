@@ -242,7 +242,7 @@ func checkBizCode(data []byte) error {
 	if msg == "" {
 		return fmt.Errorf("code=%d", b.Code)
 	}
-	return fmt.Errorf("%s", msg)
+	return fmt.Errorf("code=%d: %s", b.Code, msg)
 }
 
 func truncate(s string, n int) string {
