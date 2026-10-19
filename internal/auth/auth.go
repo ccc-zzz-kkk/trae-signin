@@ -22,10 +22,15 @@ type Auth struct {
 	ApiHost      string
 	MachineID    string
 	DeviceID     string
-	UID          string
-	EnterpriseID string
-	Nickname     string
-	FilePath     string
+	// 设备证明相关（新版 ExchangeToken 续期必需）：私钥签名、公钥上传时已注册。
+	DevicePrivateKey string // PEM（EC PRIVATE KEY 或 PKCS#8）
+	DevicePublicKey  string // PEM（PUBLIC KEY）
+	PlatformCode     string // 签发该 token 的产品线（SOLO_PC / IDE_PC），默认 SOLO_PC
+	ClientVersion    string // 登录时上报的客户端版本
+	UID              string
+	EnterpriseID     string
+	Nickname         string
+	FilePath         string
 }
 
 func (a *Auth) Lock()   { a.mu.Lock() }
@@ -61,13 +66,17 @@ func (a *Auth) NeedsRefreshLocked(within time.Duration) bool {
 func parseNested(raw []byte) (*Auth, error) {
 	var n struct {
 		Auth struct {
-			AccessToken  string `json:"accessToken"`
-			RefreshToken string `json:"refreshToken"`
-			ExpiresAt    int64  `json:"expiresAt"`
-			Domain       string `json:"domain"`
-			ApiHost      string `json:"apiHost"`
-			MachineID    string `json:"machineId"`
-			DeviceID     string `json:"deviceId"`
+			AccessToken      string `json:"accessToken"`
+			RefreshToken     string `json:"refreshToken"`
+			ExpiresAt        int64  `json:"expiresAt"`
+			Domain           string `json:"domain"`
+			ApiHost          string `json:"apiHost"`
+			MachineID        string `json:"machineId"`
+			DeviceID         string `json:"deviceId"`
+			DevicePrivateKey string `json:"deviceKeyPem"`
+			DevicePublicKey  string `json:"devicePubPem"`
+			PlatformCode     string `json:"platformCode"`
+			ClientVersion    string `json:"clientVersion"`
 		} `json:"auth"`
 		Account struct {
 			UID          string `json:"uid"`
@@ -79,46 +88,58 @@ func parseNested(raw []byte) (*Auth, error) {
 		return nil, fmt.Errorf("storage_parse_error: %w", err)
 	}
 	return &Auth{
-		AccessToken:  n.Auth.AccessToken,
-		RefreshToken: n.Auth.RefreshToken,
-		ExpiresAt:    n.Auth.ExpiresAt,
-		Domain:       n.Auth.Domain,
-		ApiHost:      n.Auth.ApiHost,
-		MachineID:    n.Auth.MachineID,
-		DeviceID:     n.Auth.DeviceID,
-		UID:          n.Account.UID,
-		EnterpriseID: n.Account.EnterpriseID,
-		Nickname:     n.Account.Nickname,
+		AccessToken:      n.Auth.AccessToken,
+		RefreshToken:     n.Auth.RefreshToken,
+		ExpiresAt:        n.Auth.ExpiresAt,
+		Domain:           n.Auth.Domain,
+		ApiHost:          n.Auth.ApiHost,
+		MachineID:        n.Auth.MachineID,
+		DeviceID:         n.Auth.DeviceID,
+		DevicePrivateKey: n.Auth.DevicePrivateKey,
+		DevicePublicKey:  n.Auth.DevicePublicKey,
+		PlatformCode:     n.Auth.PlatformCode,
+		ClientVersion:    n.Auth.ClientVersion,
+		UID:              n.Account.UID,
+		EnterpriseID:     n.Account.EnterpriseID,
+		Nickname:         n.Account.Nickname,
 	}, nil
 }
 
 func parseFlat(raw []byte) (*Auth, error) {
 	var f struct {
-		AccessToken  string `json:"accessToken"`
-		RefreshToken string `json:"refreshToken"`
-		ExpiresAt    int64  `json:"expiresAt"`
-		Domain       string `json:"domain"`
-		ApiHost      string `json:"apiHost"`
-		MachineID    string `json:"machineId"`
-		DeviceID     string `json:"deviceId"`
-		UID          string `json:"uid"`
-		EnterpriseID string `json:"enterpriseId"`
-		Nickname     string `json:"nickname"`
+		AccessToken      string `json:"accessToken"`
+		RefreshToken     string `json:"refreshToken"`
+		ExpiresAt        int64  `json:"expiresAt"`
+		Domain           string `json:"domain"`
+		ApiHost          string `json:"apiHost"`
+		MachineID        string `json:"machineId"`
+		DeviceID         string `json:"deviceId"`
+		DevicePrivateKey string `json:"deviceKeyPem"`
+		DevicePublicKey  string `json:"devicePubPem"`
+		PlatformCode     string `json:"platformCode"`
+		ClientVersion    string `json:"clientVersion"`
+		UID              string `json:"uid"`
+		EnterpriseID     string `json:"enterpriseId"`
+		Nickname         string `json:"nickname"`
 	}
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, fmt.Errorf("storage_parse_error: %w", err)
 	}
 	return &Auth{
-		AccessToken:  f.AccessToken,
-		RefreshToken: f.RefreshToken,
-		ExpiresAt:    f.ExpiresAt,
-		Domain:       f.Domain,
-		ApiHost:      f.ApiHost,
-		MachineID:    f.MachineID,
-		DeviceID:     f.DeviceID,
-		UID:          f.UID,
-		EnterpriseID: f.EnterpriseID,
-		Nickname:     f.Nickname,
+		AccessToken:      f.AccessToken,
+		RefreshToken:     f.RefreshToken,
+		ExpiresAt:        f.ExpiresAt,
+		Domain:           f.Domain,
+		ApiHost:          f.ApiHost,
+		MachineID:        f.MachineID,
+		DeviceID:         f.DeviceID,
+		DevicePrivateKey: f.DevicePrivateKey,
+		DevicePublicKey:  f.DevicePublicKey,
+		PlatformCode:     f.PlatformCode,
+		ClientVersion:    f.ClientVersion,
+		UID:              f.UID,
+		EnterpriseID:     f.EnterpriseID,
+		Nickname:         f.Nickname,
 	}, nil
 }
 
@@ -160,13 +181,17 @@ func (a *Auth) saveAtomicLocked() error {
 	}
 	doc := map[string]any{
 		"auth": map[string]any{
-			"accessToken":  a.AccessToken,
-			"refreshToken": a.RefreshToken,
-			"expiresAt":    a.ExpiresAt,
-			"domain":       a.Domain,
-			"apiHost":      a.ApiHost,
-			"machineId":    a.MachineID,
-			"deviceId":     a.DeviceID,
+			"accessToken":    a.AccessToken,
+			"refreshToken":   a.RefreshToken,
+			"expiresAt":      a.ExpiresAt,
+			"domain":         a.Domain,
+			"apiHost":        a.ApiHost,
+			"machineId":      a.MachineID,
+			"deviceId":       a.DeviceID,
+			"deviceKeyPem":   a.DevicePrivateKey,
+			"devicePubPem":   a.DevicePublicKey,
+			"platformCode":   a.PlatformCode,
+			"clientVersion":  a.ClientVersion,
 		},
 		"account": map[string]any{
 			"uid":          a.UID,

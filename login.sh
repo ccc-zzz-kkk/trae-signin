@@ -51,65 +51,34 @@ PYEOF
 CODE_VERIFIER="$(echo "$PKCE" | sed -n '1p')"
 CODE_CHALLENGE="$(echo "$PKCE" | sed -n '2p')"
 
-# ─── 一次性 ECDSA P-256 设备密钥对：公钥随 AuthCode 交换上传 ───
-# 优先 openssl；否则 cryptography 库；最后纯 Python 标准库（DER 手工编码）
+# ─── 一次性 ECDSA P-256 设备密钥对：私钥留作续期签名，公钥随 AuthCode 交换上传 ───
+# 优先 openssl（SEC1 EC PRIVATE KEY）；否则 Python cryptography 库（PKCS#8）
+DEVICE_KEY_PEM=""
 DEVICE_PUB_PEM=""
-if openssl ecparam -genkey -name prime256v1 -noout 2>/dev/null | openssl ec -pubout 2>/dev/null | grep -q "PUBLIC KEY"; then
-  DEVICE_PUB_PEM="$(openssl ecparam -genkey -name prime256v1 -noout 2>/dev/null | openssl ec -pubout 2>/dev/null)"
+if DK_PEM="$(openssl ecparam -genkey -name prime256v1 -noout 2>/dev/null)"; then
+  DEVICE_KEY_PEM="$DK_PEM"
+  DEVICE_PUB_PEM="$(printf '%s\n' "$DK_PEM" | openssl ec -pubout 2>/dev/null)"
 fi
-if [[ -z "$DEVICE_PUB_PEM" ]]; then
-  DEVICE_PUB_PEM="$("$PY" - <<'PYEOF'
-import base64, secrets
-
-def gen_pub_pem():
-    try:
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.hazmat.primitives import serialization
-        k = ec.generate_private_key(ec.SECP256R1())
-        return k.public_key().public_bytes(serialization.Encoding.PEM,
-              serialization.PublicFormat.SubjectPublicKeyInfo).decode()
-    except Exception:
-        pass
-    # 纯标准库：P-256 标量乘 + SPKI DER 编码
-    p  = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff
-    a  = p - 3
-    n  = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551
-    gx = 0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296
-    gy = 0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5
-    def inv(x, m): return pow(x, m - 2, m)
-    def add(P, Q):
-        if P is None: return Q
-        if Q is None: return P
-        if P[0] == Q[0] and (P[1] + Q[1]) % p == 0: return None
-        if P == Q:
-            lam = (3 * P[0] * P[0] + a) * inv(2 * P[1], p) % p
-        else:
-            lam = (Q[1] - P[1]) * inv(Q[0] - P[0], p) % p
-        x = (lam * lam - P[0] - Q[0]) % p
-        y = (lam * (P[0] - x) - P[1]) % p
-        return (x, y)
-    def mul(k, P):
-        R = None
-        while k:
-            if k & 1: R = add(R, P)
-            P = add(P, P)
-            k >>= 1
-        return R
-    d = secrets.randbelow(n - 1) + 1
-    x, y = mul(d, (gx, gy))
-    point = b'\x04' + x.to_bytes(32, 'big') + y.to_bytes(32, 'big')
-    # SPKI: SEQUENCE(0x59) { AlgorithmIdentifier, BIT STRING(0x00+point) }，共 91 字节
-    spki = (b'\x30\x59\x30\x13\x06\x07\x2a\x86\x48\xce\x3d\x02\x01'
-            b'\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07\x03\x42\x00' + point)
-    b64 = base64.encodebytes(spki).decode()
-    return "-----BEGIN PUBLIC KEY-----\n" + b64 + "-----END PUBLIC KEY-----\n"
-
-print(gen_pub_pem(), end="")
+if [[ -z "$DEVICE_KEY_PEM" || -z "$DEVICE_PUB_PEM" ]]; then
+  "$PY" - "$AUTH_DIR/.device_key.pem" "$AUTH_DIR/.device_pub.pem" <<'PYEOF'
+import sys
+try:
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+    k = ec.generate_private_key(ec.SECP256R1())
+    open(sys.argv[1], "w").write(k.private_bytes(serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode())
+    open(sys.argv[2], "w").write(k.public_key().public_bytes(serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo).decode())
+except Exception as e:
+    print("ERR:" + str(e))
 PYEOF
-)"
+  DEVICE_KEY_PEM="$(cat "$AUTH_DIR/.device_key.pem" 2>/dev/null)"
+  DEVICE_PUB_PEM="$(cat "$AUTH_DIR/.device_pub.pem" 2>/dev/null)"
+  rm -f "$AUTH_DIR/.device_key.pem" "$AUTH_DIR/.device_pub.pem"
 fi
-if [[ -z "$DEVICE_PUB_PEM" ]]; then
-  echo "[!] 无法生成 ECDSA 设备密钥对"
+if [[ -z "$DEVICE_KEY_PEM" || -z "$DEVICE_PUB_PEM" ]]; then
+  echo "[!] 无法生成 ECDSA 设备密钥对（需要 openssl 或 Python cryptography 库）"
   exit 1
 fi
 
@@ -386,6 +355,7 @@ fi
 
 MACHINE_ID="$MACHINE_ID" DEVICE_ID="$DEVICE_ID" TOKEN="$TOKEN" REFRESH="$REFRESH" \
 EXPIRES_AT="$EXPIRES_AT" ACCT_UID="$ACCT_UID" NICKNAME="$NICKNAME" AUTH_FILE="$AUTH_FILE" \
+DEVICE_KEY_PEM="$DEVICE_KEY_PEM" DEVICE_PUB_PEM="$DEVICE_PUB_PEM" APP_VERSION="$APP_VERSION" \
 ACTION="$ACTION" "$PY" - <<'PYEOF'
 import json, os
 auth = {
@@ -398,6 +368,10 @@ auth = {
         "apiHost": "https://api.trae.com.cn",
         "machineId": os.environ["MACHINE_ID"],
         "deviceId": os.environ["DEVICE_ID"],
+        "deviceKeyPem": os.environ["DEVICE_KEY_PEM"],
+        "devicePubPem": os.environ["DEVICE_PUB_PEM"],
+        "platformCode": "SOLO_PC",
+        "clientVersion": os.environ["APP_VERSION"],
     },
 }
 with open(os.environ["AUTH_FILE"], "w") as f:
