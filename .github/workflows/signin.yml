@@ -16,25 +16,61 @@ jobs:
           go-version: '1.21'
       - name: 编译签到工具
         run: go build -o signin_bin ./cmd/signin
-      - name: 生成凭证文件
+
+      # refreshToken 是轮换链：每次续期都会生成新值、旧值逐渐失效。
+      # Actions 每次都是全新环境，必须持久化轮换后的凭证，否则会一直用最初（越来越旧）的 token。
+      # 缓存用 TRAE_CACHE_KEY 加密，避免明文 token 留在 Actions 缓存里。
+      - name: 恢复轮换凭证缓存（加密）
+        id: restore_auth
+        uses: actions/cache/restore@v4
+        with:
+          path: auths.enc
+          key: trae-auths-${{ github.run_id }}
+          restore-keys: |
+            trae-auths-
+
+      - name: 生成/解密凭证
+        id: prep
         env:
+          TRAE_CACHE_KEY: ${{ secrets.TRAE_CACHE_KEY }}
           TRAE_AUTH_1: ${{ secrets.TRAE_AUTH_1 }}
           TRAE_AUTH_2: ${{ secrets.TRAE_AUTH_2 }}
           TRAE_AUTH_3: ${{ secrets.TRAE_AUTH_3 }}
         run: |
           mkdir -p auths
-          # 只为已配置的 secret 生成凭证文件，避免空文件导致解析报错
-          n=0
-          for i in 1 2 3; do
-            var="TRAE_AUTH_$i"
-            val="${!var:-}"
-            if [ -n "$val" ]; then
-              printf '%s\n' "$val" > "auths/trae-$i.json"
-              n=$((n+1))
-              echo "已写入 auths/trae-$i.json"
+          restored=0
+          if [ -f auths.enc ] && [ -n "$TRAE_CACHE_KEY" ]; then
+            if openssl enc -d -aes-256-cbc -pbkdf2 -in auths.enc -pass env:TRAE_CACHE_KEY -out auths.tar.gz 2>/dev/null; then
+              if tar -xzf auths.tar.gz -C . 2>/dev/null; then
+                restored=1
+              fi
             fi
-          done
-          echo "共写入 $n 个凭证文件"
+            rm -f auths.tar.gz
+          fi
+          if [ "$restored" -eq 1 ] && ls auths/trae-*.json >/dev/null 2>&1; then
+            echo "已从缓存恢复轮换后的凭证（$(ls -1 auths/trae-*.json | wc -l) 个）"
+          else
+            rm -f auths/trae-*.json
+            # 只为已配置的 secret 生成凭证文件，避免空文件导致解析报错
+            n=0
+            for i in 1 2 3; do
+              var="TRAE_AUTH_$i"
+              val="${!var:-}"
+              if [ -n "$val" ]; then
+                printf '%s\n' "$val" > "auths/trae-$i.json"
+                n=$((n+1))
+                echo "已写入 auths/trae-$i.json（来自 secrets）"
+              fi
+            done
+            echo "共写入 $n 个凭证文件"
+          fi
+          if [ -n "$TRAE_CACHE_KEY" ]; then
+            echo "cache_key_present=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "cache_key_present=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::未配置 TRAE_CACHE_KEY，轮换后的凭证不会持久化（建议配置以长期稳定）"
+          fi
+
       - name: 执行签到
         run: |
           mkdir -p /tmp/signin
@@ -90,6 +126,29 @@ jobs:
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Title: $TITLE" -H "Tags: $TAG" -d "$(printf '%b' "$BODY")" "$NTFY_URL") || true
           echo "ntfy HTTP 状态: $HTTP_CODE（200 即成功）"
-      - name: 清理凭证
+
+      # 把本次运行轮换后的凭证加密后写回缓存，供下次运行继续续期（保持 refreshToken 链不断）
+      - name: 加密轮换凭证
+        if: always() && steps.prep.outputs.cache_key_present == '1'
+        env:
+          TRAE_CACHE_KEY: ${{ secrets.TRAE_CACHE_KEY }}
+        run: |
+          rm -f auths.enc
+          if ls auths/trae-*.json >/dev/null 2>&1; then
+            tar -czf auths.tar.gz auths
+            openssl enc -aes-256-cbc -pbkdf2 -salt -in auths.tar.gz -pass env:TRAE_CACHE_KEY -out auths.enc
+            rm -f auths.tar.gz
+            echo "已加密轮换后的凭证"
+          else
+            echo "无可保存凭证"
+          fi
+      - name: 写入缓存
+        if: always() && steps.prep.outputs.cache_key_present == '1'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: auths.enc
+          key: trae-auths-${{ github.run_id }}
+      - name: 清理明文凭证
         if: always()
         run: rm -rf auths

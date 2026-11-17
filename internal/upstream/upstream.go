@@ -70,16 +70,42 @@ func (c *Client) doJSON(req *http.Request) (json.RawMessage, error) {
 
 // RefreshToken 通过 ExchangeToken 强制刷新 access token。
 // 新版接口要求带设备证明（ECDSA P-256 签名），缺了会返回 20405；有设备材料时优先走新端点。
+//
+// refreshToken 是轮换链：服务端偶尔会对「较旧/已轮换」的 refreshToken 返回
+// 一个签发即过期（exp 早于 iat）的 accessToken——刷新看似成功，但 token 不可用，
+// 后续签到会以 code=1001 失败。applyExchangeResult 已把返回的新 refreshToken 写回，
+// 因此发现 token 不可用时，用轮换出的新值立即再刷一次即可恢复（实测第二次必成）。
 func (c *Client) RefreshToken(a *auth.Auth) error {
 	a.Lock()
 	defer a.Unlock()
 	if strings.TrimSpace(a.RefreshToken) == "" {
 		return fmt.Errorf("no refreshToken")
 	}
-	if a.DevicePrivateKey != "" && a.DevicePublicKey != "" && a.DeviceID != "" {
-		return c.refreshWithProof(a)
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		var err error
+		if a.DevicePrivateKey != "" && a.DevicePublicKey != "" && a.DeviceID != "" {
+			err = c.refreshWithProof(a)
+		} else {
+			err = c.refreshLegacy(a)
+		}
+		if err != nil {
+			return err
+		}
+		if tokenUsable(a.ExpiresAt) {
+			return nil
+		}
+		lastErr = fmt.Errorf("刷新返回的 token 已过期（exp=%d），轮换后仍不可用", a.ExpiresAt)
 	}
-	return c.refreshLegacy(a)
+	return fmt.Errorf("%w — re-login required", lastErr)
+}
+
+// tokenUsable 判断刷新得到的 token 是否仍可用（留 30 秒余量）；到期时间未知时不阻断。
+func tokenUsable(exp int64) bool {
+	if exp <= 0 {
+		return true
+	}
+	return exp > time.Now().Unix()+30
 }
 
 // refreshLegacy 旧端点续期（无设备证明），旧 token / 缺设备材料时兜底。

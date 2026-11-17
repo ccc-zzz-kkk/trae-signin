@@ -1,5 +1,7 @@
 # 凭证文件（含 token）
 auths/
+auths.enc
+auths.tar.gz
 
 # 编译产物
 signin_bin
