@@ -61,7 +61,7 @@ func main() {
 			fmt.Printf("🔄 %s token 即将过期，正在刷新...\n", r.uid)
 			if err := up.RefreshToken(a); err != nil {
 				r.status = "FAIL"
-				r.detail = "refresh: " + short(err.Error())
+				r.detail = "refresh: " + strings.ReplaceAll(err.Error(), "\n", " ")
 				rows = append(rows, r)
 				failN++
 				continue
@@ -74,7 +74,7 @@ func main() {
 		switch {
 		case cerr != nil:
 			r.status = "FAIL"
-			r.detail = short(cerr.Error())
+			r.detail = strings.ReplaceAll(cerr.Error(), "\n", " ")
 			failN++
 		case already:
 			r.status = "ALREADY"
@@ -114,6 +114,12 @@ func main() {
 	fmt.Println("└──────────────────────────────────────┴───────────────┴──────────────┴──────────┴──────────────────────────────────────┘")
 	fmt.Println()
 	fmt.Printf("📊 总计=%d  签到成功=%d  已签=%d  失败=%d\n", len(rows), okN, alreadyN, failN)
+	// 失败账号打印完整原因（表格里详情会被截断，便于在 Actions 日志里定位问题）
+	for _, r := range rows {
+		if r.status == "FAIL" {
+			fmt.Printf("❌ %s (%s): %s\n", r.nick, r.uid, r.detail)
+		}
+	}
 }
 
 func trunc(s string, n int) string {

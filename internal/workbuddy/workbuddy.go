@@ -215,6 +215,9 @@ func (c *Client) RefreshToken(a *auth.Auth) error {
 	if err != nil {
 		return err
 	}
+	if status == http.StatusUnauthorized {
+		return fmt.Errorf("refresh http 401: refreshToken 已失效，请重新运行 login-workbuddy.sh 登录该账号（%s）", truncate(string(raw), 120))
+	}
 	if status >= 300 {
 		return fmt.Errorf("refresh http %d: %s", status, truncate(string(raw), 200))
 	}
