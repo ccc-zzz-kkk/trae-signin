@@ -20,14 +20,16 @@ jobs:
       # WorkBuddy 刷新后可能下发新的 refreshToken（轮换），Actions 每次都是全新环境，
       # 必须持久化轮换后的凭证，否则会一直用最初（越来越旧）的 token，最终 refresh 401。
       # 缓存用 WORKBUDDY_CACHE_KEY 加密，避免明文 token 留在 Actions 缓存里。
+      # 缓存 key 前缀带版本号：v1（workbuddy-auths-）里可能残留已失效的 refreshToken，
+      # 换前缀可让旧缓存整体失效，强制回落到 secrets 重新建链。
       - name: 恢复轮换凭证缓存（加密）
         id: restore_auth
         uses: actions/cache/restore@v4
         with:
           path: auths.enc
-          key: workbuddy-auths-${{ github.run_id }}
+          key: workbuddy-auth-v2-${{ github.run_id }}
           restore-keys: |
-            workbuddy-auths-
+            workbuddy-auth-v2-
 
       - name: 生成/解密凭证
         id: prep
@@ -148,7 +150,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: auths.enc
-          key: workbuddy-auths-${{ github.run_id }}
+          key: workbuddy-auth-v2-${{ github.run_id }}
       - name: 清理明文凭证
         if: always()
         run: rm -rf auths
