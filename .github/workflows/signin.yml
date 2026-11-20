@@ -98,6 +98,11 @@ jobs:
             exit 0
           fi
           FAIL="${{ steps.result.outputs.fail }}"
+          # 定时兜底（schedule）：当日已签且无失败时不推送，避免 GitHub 调度延迟造成的迟到通知
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${FAIL:-0}" = "0" ] && [ "${{ steps.result.outputs.ok || '0' }}" = "0" ]; then
+            echo "定时兜底：当日已签到，跳过通知"
+            exit 0
+          fi
           if [ "$FAIL" -gt 0 ] 2>/dev/null; then
             TITLE="⚠️ TRAE签到异常"
             TAG="warning"
